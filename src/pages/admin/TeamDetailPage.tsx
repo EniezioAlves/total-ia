@@ -455,7 +455,7 @@ export function TeamDetailPage() {
   );
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:p-8">
       <Link to="/admin/teams" className="text-sm text-muted hover:text-navy">
         ← Equipes
       </Link>

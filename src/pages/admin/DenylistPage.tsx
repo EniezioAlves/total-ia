@@ -35,7 +35,7 @@ export function DenylistPage() {
   });
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:p-8">
       <h1 className="text-2xl font-semibold text-navy">Bloqueios</h1>
       <p className="mt-2 text-sm text-muted">
         Identidades bloqueadas não conseguem usar o assistente.

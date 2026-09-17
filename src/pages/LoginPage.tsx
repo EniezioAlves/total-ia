@@ -4,7 +4,7 @@ import { friendlyAuthError } from "../api/errors";
 
 export function LoginPage({ error }: { error: string }) {
   return (
-    <div className="grid min-h-screen place-items-center bg-navy px-4">
+    <div className="grid min-h-[var(--app-height)] place-items-center bg-navy px-4 py-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
       <section className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl">
         <div className="mb-6">
           <Logo variant="hero" />

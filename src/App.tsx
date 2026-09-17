@@ -1,3 +1,4 @@
+import type { ReactElement } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Shell } from "./components/Shell";
@@ -9,12 +10,28 @@ import { TeamDetailPage } from "./pages/admin/TeamDetailPage";
 import { TeamsPage } from "./pages/admin/TeamsPage";
 import { ChatPage } from "./pages/chat/ChatPage";
 import { LoginPage } from "./pages/LoginPage";
-import { useSession } from "./auth/useSession";
+import { useSession, type Session } from "./auth/useSession";
 
 type AppProps = {
   signedIn: boolean;
   bootError: string;
 };
+
+function AdminRoute({
+  session,
+  children,
+}: {
+  session: Session;
+  children: ReactElement;
+}) {
+  if (!session.ready) {
+    return null;
+  }
+  if (!session.admin) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
 
 export function App({ signedIn, bootError }: AppProps) {
   const session = useSession(signedIn);
@@ -29,27 +46,51 @@ export function App({ signedIn, bootError }: AppProps) {
         <Route path="/" element={<ChatPage />} />
         <Route
           path="/admin/teams"
-          element={session.admin ? <TeamsPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <TeamsPage />
+            </AdminRoute>
+          }
         />
         <Route
           path="/admin/teams/:teamId"
-          element={session.admin ? <TeamDetailPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <TeamDetailPage />
+            </AdminRoute>
+          }
         />
         <Route
           path="/admin/spend"
-          element={session.admin ? <SpendPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <SpendPage />
+            </AdminRoute>
+          }
         />
         <Route
           path="/admin/denylist"
-          element={session.admin ? <DenylistPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <DenylistPage />
+            </AdminRoute>
+          }
         />
         <Route
           path="/admin/audit"
-          element={session.admin ? <AuditPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <AuditPage />
+            </AdminRoute>
+          }
         />
         <Route
           path="/admin/health"
-          element={session.admin ? <HealthPage /> : <Navigate to="/" replace />}
+          element={
+            <AdminRoute session={session}>
+              <HealthPage />
+            </AdminRoute>
+          }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -8,7 +8,7 @@ export function HealthPage() {
   const checks = query.data?.checks ?? {};
 
   return (
-    <div className="mx-auto max-w-4xl p-8">
+    <div className="mx-auto max-w-4xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:p-8">
       <h1 className="text-2xl font-semibold text-navy">Saúde da plataforma</h1>
       <p className="mt-2 text-sm text-muted">
         Dependências da plataforma. Gráficos detalhados ficam no Grafana.

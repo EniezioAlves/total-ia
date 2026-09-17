@@ -9,8 +9,8 @@ export function TeamsPage() {
   const teams = query.data ?? [];
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
-      <div className="flex items-end justify-between gap-4">
+    <div className="mx-auto max-w-5xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:p-8">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-navy">Equipes</h1>
           <p className="mt-2 text-sm text-muted">
@@ -27,7 +27,7 @@ export function TeamsPage() {
       {query.isError ? (
         <p className="mt-4 text-sm text-danger">{networkErrorMessage(query.error)}</p>
       ) : null}
-      <div className="mt-6 overflow-hidden rounded-xl border border-line bg-white">
+      <div className="mt-6 overflow-x-auto rounded-xl border border-line bg-white">
         <table className="w-full text-left text-sm">
           <thead className="bg-ice text-muted">
             <tr>

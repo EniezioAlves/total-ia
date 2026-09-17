@@ -6,6 +6,7 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { currentAccount, initAuth } from "./auth/msal";
 import { friendlyAuthError } from "./api/errors";
+import { useAppHeight } from "./hooks/useAppHeight";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -15,6 +16,7 @@ const queryClient = new QueryClient({
 });
 
 function Root() {
+  useAppHeight();
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState("");
 
@@ -33,7 +35,7 @@ function Root() {
 
   if (!ready) {
     return (
-      <div className="grid min-h-screen place-items-center bg-ice text-muted">
+      <div className="grid min-h-[var(--app-height)] place-items-center bg-ice text-muted">
         A iniciar Total IA…
       </div>
     );

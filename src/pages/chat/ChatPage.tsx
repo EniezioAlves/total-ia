@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Plus, Square, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Check, Copy, Menu, PanelLeftClose, Plus, Square, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, startTransition, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
   createThread,
@@ -14,6 +14,35 @@ import {
 import { isAbortError, networkErrorMessage, toolBusyLabel, toolDisplayName } from "../../api/errors";
 import type { ChatMessage, ToolItem } from "../../api/types";
 import { useSession } from "../../auth/useSession";
+import { MarkdownBody, previewPlain } from "../../components/MarkdownBody";
+import { VoiceMicButton } from "../../components/VoiceMicButton";
+
+const THREADS_WIDTH_KEY = "total-ia.threads-width";
+const THREADS_OPEN_KEY = "total-ia.threads-open";
+const THREADS_MIN = 200;
+const THREADS_MAX = 520;
+const THREADS_DEFAULT = 288;
+
+function readNumber(key: string, fallback: number): number {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function readFlag(key: string, fallback: boolean): boolean {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) {
+      return fallback;
+    }
+    return raw !== "0";
+  } catch {
+    return fallback;
+  }
+}
 
 function suggestionPrompts(tools: ToolItem[]): { label: string; text: string }[] {
   const ids = new Set(tools.map((tool) => tool.id));
@@ -30,6 +59,36 @@ function suggestionPrompts(tools: ToolItem[]): { label: string; text: string }[]
   return items;
 }
 
+function CopyReplyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!text.trim()) {
+    return null;
+  }
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="mt-1 inline-flex rounded-md p-1 text-muted hover:bg-ice hover:text-navy"
+      aria-label={copied ? "Copiado" : "Copiar resposta"}
+      title={copied ? "Copiado" : "Copiar"}
+      onClick={() => void copy()}
+    >
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  );
+}
+
 export function ChatPage() {
   const session = useSession(true);
   const queryClient = useQueryClient();
@@ -40,9 +99,15 @@ export function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [toolName, setToolName] = useState("");
   const [error, setError] = useState("");
+  const [dictating, setDictating] = useState(false);
   const [listOpen, setListOpen] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [threadsOpen, setThreadsOpen] = useState(() => readFlag(THREADS_OPEN_KEY, true));
+  const [threadsWidth, setThreadsWidth] = useState(() =>
+    Math.min(THREADS_MAX, Math.max(THREADS_MIN, readNumber(THREADS_WIDTH_KEY, THREADS_DEFAULT))),
+  );
+  const listRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const threadsQuery = useQuery({
     queryKey: ["threads"],
@@ -72,8 +137,70 @@ export function ChatPage() {
   }, [model, models]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const node = listRef.current;
+    if (!node) {
+      return;
+    }
+    node.scrollTop = node.scrollHeight;
   }, [messages, toolName, busy]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THREADS_WIDTH_KEY, String(threadsWidth));
+    } catch {
+      /* ignore quota */
+    }
+  }, [threadsWidth]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THREADS_OPEN_KEY, threadsOpen ? "1" : "0");
+    } catch {
+      /* ignore quota */
+    }
+  }, [threadsOpen]);
+
+  useEffect(() => {
+    function endDrag() {
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("blur", endDrag);
+    return () => {
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("blur", endDrag);
+    };
+  }, []);
+
+  function onResizePointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    dragRef.current = { startX: event.clientX, startWidth: threadsWidth };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  function onResizePointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag) {
+      return;
+    }
+    const next = drag.startWidth + (event.clientX - drag.startX);
+    setThreadsWidth(Math.round(Math.min(THREADS_MAX, Math.max(THREADS_MIN, next))));
+  }
+
+  function onResizePointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
 
   async function openThread(id: string) {
     setThreadId(id);
@@ -110,6 +237,7 @@ export function ChatPage() {
     const controller = new AbortController();
     abortRef.current = controller;
     let activeId = threadId;
+    let paint = 0;
     try {
       if (!activeId) {
         const created = await createThread();
@@ -121,6 +249,18 @@ export function ChatPage() {
       let assistant = "";
       let sources: string[] = [];
       let finished = false;
+      const paintAssistant = () => {
+        paint = 0;
+        const snapshot = assistant;
+        const src = sources;
+        startTransition(() => {
+          setMessages((current) => {
+            const next = [...current];
+            next[next.length - 1] = { role: "assistant", content: snapshot, sources: src };
+            return next;
+          });
+        });
+      };
       setMessages((current) => [...current, { role: "assistant", content: "" }]);
       for await (const event of streamRun(activeId, content, model || undefined, controller.signal)) {
         if (event.type === "tool") {
@@ -131,16 +271,17 @@ export function ChatPage() {
         }
         if (event.type === "delta" && event.data.content) {
           assistant += event.data.content;
-          const snapshot = assistant;
-          setMessages((current) => {
-            const next = [...current];
-            next[next.length - 1] = { role: "assistant", content: snapshot, sources };
-            return next;
-          });
+          if (!paint) {
+            paint = requestAnimationFrame(paintAssistant);
+          }
         }
         if (event.type === "done") {
           finished = true;
           assistant = event.data.content || assistant;
+          if (paint) {
+            cancelAnimationFrame(paint);
+            paint = 0;
+          }
           setMessages((current) => {
             const next = [...current];
             next[next.length - 1] = {
@@ -193,6 +334,9 @@ export function ChatPage() {
       });
       setError(networkErrorMessage(err));
     } finally {
+      if (paint) {
+        cancelAnimationFrame(paint);
+      }
       abortRef.current = null;
       setBusy(false);
       setToolName("");
@@ -204,29 +348,41 @@ export function ChatPage() {
   }
 
   return (
-    <div className="relative flex h-full min-h-0">
+    <div className="absolute inset-0 flex min-h-0 overflow-hidden">
       <section
         className={`${
-          listOpen ? "absolute inset-y-0 left-0 z-20 flex" : "hidden"
-        } w-72 shrink-0 flex-col border-r border-line bg-white md:static md:flex`}
+          listOpen ? "absolute inset-y-0 left-0 z-20 flex w-[min(22rem,90vw)]" : "hidden"
+        } min-h-0 shrink-0 flex-col overflow-hidden border-r border-line bg-white md:static md:w-[var(--threads-width)] ${threadsOpen ? "md:flex" : "md:hidden"}`}
+        style={{ "--threads-width": `${threadsWidth}px` } as CSSProperties}
       >
-        <div className="flex items-center justify-between px-4 py-4">
+        <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-4">
           <h2 className="text-sm font-semibold">Conversas</h2>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
-            onClick={() => {
-              setThreadId(null);
-              setMessages([]);
-              setError("");
-              setListOpen(false);
-            }}
-          >
-            <Plus size={14} />
-            Nova conversa
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
+              onClick={() => {
+                setThreadId(null);
+                setMessages([]);
+                setError("");
+                setListOpen(false);
+              }}
+            >
+              <Plus size={14} />
+              Nova
+            </button>
+            <button
+              type="button"
+              className="hidden rounded-lg p-1.5 text-muted hover:bg-ice hover:text-navy md:inline-flex"
+              aria-label="Esconder conversas"
+              title="Esconder conversas"
+              onClick={() => setThreadsOpen(false)}
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-auto px-2 pb-3">
+        <div className="h-0 min-h-0 flex-1 overflow-auto px-2 pb-3">
           {threadsQuery.isError ? (
             <p className="px-2 text-sm text-danger">{networkErrorMessage(threadsQuery.error)}</p>
           ) : null}
@@ -246,7 +402,7 @@ export function ChatPage() {
                 onClick={() => void openThread(thread.id)}
               >
                 <div className="truncate text-sm text-ink">
-                  {thread.preview || "Nova conversa"}
+                  {previewPlain(thread.preview || "") || "Nova conversa"}
                 </div>
                 <div className="text-[11px] text-muted">
                   {new Date(thread.updated_at || thread.created_at).toLocaleString("pt-BR")}
@@ -276,19 +432,42 @@ export function ChatPage() {
           onClick={() => setListOpen(false)}
         />
       ) : null}
+      {threadsOpen ? (
+        <div className="relative z-30 hidden w-0 shrink-0 self-stretch md:block">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionar coluna de conversas"
+            title="Arraste para aumentar ou diminuir"
+            className="absolute inset-y-0 -left-1.5 w-3 cursor-col-resize"
+            onPointerDown={onResizePointerDown}
+            onPointerMove={onResizePointerMove}
+            onPointerUp={onResizePointerUp}
+            onPointerCancel={onResizePointerUp}
+          />
+        </div>
+      ) : null}
 
-      <section className="flex min-w-0 flex-1 flex-col">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {session.ready && !session.invoke ? (
           <p className="border-b border-line bg-white px-4 py-4 text-sm text-danger md:px-6">
             Sua conta não tem permissão para usar o assistente. Peça ao administrador para
             liberar o acesso.
           </p>
         ) : null}
-        <header className="flex flex-wrap items-center gap-3 border-b border-line bg-white px-3 py-3 md:px-6">
+        <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line bg-white px-3 py-2 md:gap-3 md:px-6 md:py-3">
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-sm text-navy md:hidden"
-            onClick={() => setListOpen(true)}
+            className={`inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-sm text-navy ${
+              threadsOpen ? "md:hidden" : ""
+            }`}
+            onClick={() => {
+              if (window.matchMedia("(min-width: 768px)").matches) {
+                setThreadsOpen(true);
+              } else {
+                setListOpen(true);
+              }
+            }}
           >
             <Menu size={16} />
             Conversas
@@ -296,7 +475,7 @@ export function ChatPage() {
           <label className="text-sm text-muted">
             Modelo
             <select
-              className="ml-2 rounded-lg border border-line bg-white px-2 py-1 text-ink"
+              className="ml-2 max-w-[10rem] rounded-lg border border-line bg-white px-2 py-1 text-base text-ink md:max-w-none md:text-sm"
               value={model}
               disabled={busy}
               onChange={(event) => setModel(event.target.value)}
@@ -312,7 +491,7 @@ export function ChatPage() {
               )}
             </select>
           </label>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex max-w-full gap-1 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {tools.map((tool: ToolItem) => (
               <span
                 key={tool.id}
@@ -330,7 +509,10 @@ export function ChatPage() {
           </div>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-auto px-4 py-6 md:px-6">
+        <div
+          ref={listRef}
+          className="h-0 min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-3 py-4 [overflow-anchor:none] md:px-6 md:py-6"
+        >
           {!messages.length ? (
             <div className="mx-auto max-w-2xl">
               <h1 className="text-2xl font-semibold text-navy">Como posso ajudar?</h1>
@@ -359,41 +541,52 @@ export function ChatPage() {
                 .map((item, index) => (
                   <div
                     key={`${item.role}-${index}`}
-                    className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-3 leading-6 ${
-                      item.role === "user"
-                        ? "ml-auto bg-navy text-white"
-                        : "bg-white text-ink shadow-sm"
+                    className={`min-w-0 max-w-[min(92%,42rem)] overflow-hidden rounded-2xl px-3 py-3 leading-6 md:max-w-[min(85%,42rem)] md:px-4 ${
+                      item.role === "user" ? "ml-auto bg-navy text-white" : "bg-white text-ink shadow-sm"
                     }`}
                   >
-                    {item.content || (busy && index === messages.length - 1 ? "…" : "")}
+                    <MarkdownBody
+                      tone={item.role === "user" ? "dark" : "light"}
+                      streaming={
+                        item.role === "assistant" && busy && index === messages.length - 1
+                      }
+                      text={
+                        item.content ||
+                        (item.role === "assistant" && busy && index === messages.length - 1 ? "…" : "")
+                      }
+                    />
                     {item.role === "assistant" && item.sources?.length ? (
-                      <p className="mt-2 text-[11px] text-muted">
+                      <p className="mt-2 break-words text-[11px] text-muted [overflow-wrap:anywhere]">
                         Fontes: {item.sources.join(" · ")}
                       </p>
+                    ) : null}
+                    {item.role === "assistant" ? (
+                      <div className="flex justify-end">
+                        <CopyReplyButton text={item.content} />
+                      </div>
                     ) : null}
                   </div>
                 ))}
               {toolName ? (
                 <div className="text-sm text-accent">{toolBusyLabel(toolName)}</div>
               ) : null}
-              <div ref={bottomRef} />
             </div>
           )}
         </div>
 
         <form
-          className="border-t border-line bg-white px-4 py-4 md:px-6"
+          className="shrink-0 border-t border-line bg-white px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:py-4"
           onSubmit={(event) => {
             event.preventDefault();
             void send(draft);
           }}
         >
-          <div className="mx-auto flex max-w-3xl items-end gap-3">
+          <div className="mx-auto flex max-w-3xl items-end gap-2 md:gap-3">
             <textarea
-              className="min-h-16 flex-1 resize-y rounded-xl border border-line px-3 py-2"
-              placeholder="Escreva sua pergunta…"
+              className="max-h-36 min-h-12 flex-1 resize-y rounded-xl border border-line px-3 py-2 text-base md:min-h-16 md:text-sm"
+              placeholder={dictating ? "Ouvindo…" : "Escreva sua pergunta…"}
               value={draft}
-              disabled={busy}
+              disabled={busy || dictating}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {
@@ -402,10 +595,17 @@ export function ChatPage() {
                 }
               }}
             />
+            <VoiceMicButton
+              disabled={busy || !models.length}
+              draft={draft}
+              onDraft={setDraft}
+              onError={setError}
+              onListeningChange={setDictating}
+            />
             {busy ? (
               <button
                 type="button"
-                className="inline-flex items-center gap-1 rounded-xl border border-line px-4 py-3 font-medium text-navy"
+                className="inline-flex min-h-11 shrink-0 items-center gap-1 rounded-xl border border-line px-3 py-2 font-medium text-navy md:px-4 md:py-3"
                 onClick={stop}
               >
                 <Square size={14} />
@@ -415,7 +615,7 @@ export function ChatPage() {
               <button
                 type="submit"
                 disabled={!draft.trim() || !models.length}
-                className="rounded-xl bg-accent px-4 py-3 font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+                className="min-h-11 shrink-0 rounded-xl bg-accent px-3 py-2 font-medium text-white hover:bg-accent-hover disabled:opacity-50 md:px-4 md:py-3"
               >
                 Enviar
               </button>
@@ -427,7 +627,7 @@ export function ChatPage() {
               Nenhum modelo está liberado para a sua equipe. Peça ao administrador para configurar.
             </p>
           ) : (
-            <p className="mx-auto mt-2 max-w-3xl text-xs text-muted">
+            <p className="mx-auto mt-2 hidden max-w-3xl text-xs text-muted md:block">
               Enter envia · Shift+Enter quebra linha
             </p>
           )}
